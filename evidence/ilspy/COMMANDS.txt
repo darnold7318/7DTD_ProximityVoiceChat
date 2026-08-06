@@ -1,0 +1,4 @@
+ilspycmd -t VoiceHelpers -r <V3.1-b14-Managed-folder> Assembly-CSharp.dll
+ilspycmd -t PartyVoice -r <V3.1-b14-Managed-folder> Assembly-CSharp.dll
+ilspycmd -t Platform.EOS.Voice -r <V3.1-b14-Managed-folder> Assembly-CSharp.dll
+ilspycmd -t World -r <V3.1-b14-Managed-folder> Assembly-CSharp.dll
