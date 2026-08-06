@@ -1,6 +1,7 @@
-# ProximityPartyVoice 1.0.10 R13
+# ProximityPartyVoice R17
 
-Open `ProximityPartyVoice.sln` in Visual Studio 2022 and build **Release**.
-The installable folder is generated under `Build/ProximityPartyVoice`.
+Version **1.0.14** for **7 Days to Die V3.1 B14 Mono**.
 
-See `README_R13_NATIVE_PTT_GATE.md` for the test purpose and expected log lines.
+Open `ProximityPartyVoice.sln` in Visual Studio 2022 and build **Release | Any CPU**. The installable mod folder is generated under `Build/ProximityPartyVoice`.
+
+The project expects the B14 managed reference assemblies under `lib/Game`. See `README_R17_DIRECT_CAPTURE_STATE.md` for the R17 design, expected diagnostics, and test purpose.
