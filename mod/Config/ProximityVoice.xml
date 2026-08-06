@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<proximityVoice>
+
+  <!-- ================================================================
+       INPUT
+       V controls party-radio transmission.
+       Double-tap V opens or closes the channel selector.
+       mode: PushToTalk or Toggle
+       ================================================================ -->
+  <input
+    key="V"
+    mode="PushToTalk"
+    doubleTapWindowMs="350"
+    suppressTransmitOnDoubleTap="true" />
+
+  <!-- ================================================================
+       PROXIMITY VOICE — native EOS participant-volume routing
+       Nearby players are full volume through startMeters.
+       Volume fades between startMeters and endMeters.
+       Players beyond endMeters are inaudible.
+       logarithmicStrength controls the fade curve; higher values retain
+       more volume near the listener before falling off near endMeters.
+       ================================================================ -->
+  <proximity
+    enabled="true"
+    startMeters="15"
+    endMeters="50"
+    logarithmicStrength="9" />
+
+  <!-- ================================================================
+       PARTY RADIO — native EOS voice, not a separate network service
+       Party members on the selected channel can be heard regardless of
+       distance. Channels are numbered 1 through channelCount (maximum 10).
+       ================================================================ -->
+  <radio
+    enabled="true"
+    defaultChannel="1"
+    channelCount="10" />
+
+  <!-- ================================================================
+       HUD AND CHANNEL SELECTOR
+       hudX: pixels from the left edge.
+       hudY: pixels upward from the bottom edge to the TOP of the HUD box.
+       Defaults place CH01 immediately to the right of the water bar.
+       Selector width/height are centered automatically.
+       ================================================================ -->
+  <ui
+    hudX="182"
+    hudY="35"
+    hudWidth="112"
+    hudHeight="30"
+    hudFontSize="16"
+    txFontSize="14"
+    selectorWidth="360"
+    selectorHeight="560"
+    selectorButtonHeight="38" />
+
+</proximityVoice>
