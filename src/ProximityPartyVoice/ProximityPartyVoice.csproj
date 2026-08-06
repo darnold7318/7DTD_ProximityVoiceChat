@@ -6,7 +6,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>ProximityPartyVoice</AssemblyName>
     <RootNamespace>ProximityPartyVoice</RootNamespace>
-    <Version>1.0.14</Version>
+    <Version>1.0.15</Version>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
@@ -14,6 +14,10 @@
     <ModSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\mod'))</ModSourceDir>
     <ModOutputDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\Build\ProximityPartyVoice'))</ModOutputDir>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(OS)' != 'Windows_NT'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="0Harmony" HintPath="$(GameLibDir)\0Harmony.dll" Private="false" />
