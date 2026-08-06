@@ -9,9 +9,9 @@ using HarmonyLib;
 namespace ProximityPartyVoice;
 
 /// <summary>
-/// R15 obtains the game's existing EOS voice/RTC objects through the PartyVoice wrapper,
-/// but calls the EOS RTCAudio API with its real compile-time types. This removes the
-/// reflection invocation/callback mismatch present in R14.
+/// Keeps the existing R15 participant-volume routing only. R18 local microphone
+/// control no longer calls EOS directly; it writes PartyVoice.platformPartyVoice
+/// .MuteSelf and lets the stock Platform.EOS.Voice setter call UpdateSending.
 /// </summary>
 internal static class NativeVoiceRoutingBridge
 {
@@ -22,8 +22,6 @@ internal static class NativeVoiceRoutingBridge
     static object? eosVoice;
     static RTCAudioInterface? rtcAudio;
     static string roomName = string.Empty;
-    static bool? lastSendingState;
-    static float nextResolveAttempt;
 
     public static void Initialize()
     {
@@ -31,94 +29,24 @@ internal static class NativeVoiceRoutingBridge
         initialized = true;
         try
         {
-            harmony = new Harmony("NoFriendlyFire.ProximityPartyVoice.NativeRouting.R15");
+            harmony = new Harmony("ProximityPartyVoice.ParticipantRouting.R18");
             Type? voiceType = AccessTools.TypeByName("Platform.EOS.Voice");
             MethodInfo? participantChanged = voiceType == null ? null : AccessTools.Method(voiceType, "participantVoiceChanged");
             if (participantChanged != null)
             {
                 MethodInfo postfix = AccessTools.Method(typeof(NativeVoiceRoutingBridge), nameof(ParticipantVoiceChangedPostfix));
                 harmony.Patch(participantChanged, postfix: new HarmonyMethod(postfix));
-                ModLog.Info("R15: patched Platform.EOS.Voice.participantVoiceChanged for typed participant routing.");
+                ModLog.Info("R18 patched Platform.EOS.Voice.participantVoiceChanged for participant-volume routing.");
             }
             else
             {
-                ModLog.Warning("R15: Platform.EOS.Voice.participantVoiceChanged was not found.");
+                ModLog.Warning("R18 Platform.EOS.Voice.participantVoiceChanged was not found.");
             }
         }
         catch (Exception ex)
         {
-            ModLog.Warning("R15 native routing initialization failed: " + ex);
+            ModLog.Warning("R18 participant routing initialization failed: " + ex);
         }
-    }
-
-    public static bool TrySetLocalSending(bool sending)
-    {
-        if (lastSendingState == sending && rtcAudio != null) return true;
-        object? voice = ResolveVoiceInstance();
-        if (voice == null) return false;
-
-        try
-        {
-            RTCAudioInterface? audio = ResolveRtcAudio(voice);
-            string room = ReadString(voice, "roomName") ?? string.Empty;
-            ProductUserId? localUser = ResolveLocalProductUserId();
-            if (audio == null || string.IsNullOrEmpty(room) || localUser == null)
-            {
-                ModLog.Warning($"R15 typed EOS sending unavailable: audio={(audio != null)}, room={!string.IsNullOrEmpty(room)}, localUser={(localUser != null)}.");
-                return TrySetMuteSelfFallback(voice, sending);
-            }
-
-            var options = new UpdateSendingOptions
-            {
-                LocalUserId = localUser,
-                RoomName = room,
-                AudioStatus = sending ? RTCAudioStatus.Enabled : RTCAudioStatus.Disabled
-            };
-
-            audio.UpdateSending(ref options, null, OnUpdateSendingResult);
-            lastSendingState = sending;
-            ModLog.Info($"R15: typed EOS microphone sending requested {(sending ? "ENABLED" : "DISABLED")} for room {room}.");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ModLog.Warning("R15 typed EOS UpdateSending failed: " + ex.GetBaseException().Message);
-            return TrySetMuteSelfFallback(voice, sending);
-        }
-    }
-
-    static void OnUpdateSendingResult(ref UpdateSendingCallbackInfo data)
-    {
-        ModLog.Info("R15: typed EOS UpdateSending result=" + data.ResultCode + ".");
-    }
-
-    static bool TrySetMuteSelfFallback(object voice, bool sending)
-    {
-        try
-        {
-            PropertyInfo? mute = voice.GetType().GetProperty("MuteSelf", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (mute?.CanWrite == true && mute.PropertyType == typeof(bool))
-            {
-                mute.SetValue(voice, !sending, null);
-                lastSendingState = sending;
-                ModLog.Info($"R15 fallback: MuteSelf set to {!sending}.");
-                return true;
-            }
-
-            FieldInfo? field = voice.GetType().GetField("muteSelf", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (field?.FieldType == typeof(bool))
-            {
-                field.SetValue(voice, !sending);
-                lastSendingState = sending;
-                ModLog.Info($"R15 fallback: muteSelf field set to {!sending}.");
-                return true;
-            }
-        }
-        catch (Exception ex)
-        {
-            ModLog.Warning("R15 MuteSelf fallback failed: " + ex.GetBaseException().Message);
-        }
-        return false;
     }
 
     static object? ResolveVoiceInstance()
@@ -128,31 +56,19 @@ internal static class NativeVoiceRoutingBridge
             if (eosVoice != null) return eosVoice;
         }
 
-        if (UnityEngine.Time.unscaledTime < nextResolveAttempt) return null;
-        nextResolveAttempt = UnityEngine.Time.unscaledTime + 1f;
-
         try
         {
-            Type? partyVoiceType = AccessTools.TypeByName("PartyVoice");
-            if (partyVoiceType != null)
+            PartyVoice partyVoice = PartyVoice.Instance;
+            object? platform = partyVoice.platformPartyVoice;
+            if (platform != null && platform.GetType().FullName?.IndexOf("Platform.EOS.Voice", StringComparison.Ordinal) >= 0)
             {
-                const BindingFlags sf = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
-                object? partyVoice = partyVoiceType.GetProperty("Instance", sf)?.GetValue(null, null)
-                                  ?? partyVoiceType.GetField("Instance", sf)?.GetValue(null)
-                                  ?? partyVoiceType.GetProperty("instance", sf)?.GetValue(null, null)
-                                  ?? partyVoiceType.GetField("instance", sf)?.GetValue(null);
-                object? platform = ReadMember(partyVoice, "platformPartyVoice");
-                if (platform != null && platform.GetType().FullName?.IndexOf("Platform.EOS.Voice", StringComparison.Ordinal) >= 0)
-                {
-                    lock (Sync) eosVoice = platform;
-                    ModLog.Info("R15: resolved Platform.EOS.Voice through PartyVoice.platformPartyVoice.");
-                    return platform;
-                }
+                lock (Sync) eosVoice = platform;
+                return platform;
             }
         }
         catch (Exception ex)
         {
-            ModLog.Warning("R15 EOS voice instance resolution failed: " + ex.GetBaseException().Message);
+            ModLog.Warning("R18 EOS voice instance resolution failed: " + ex.GetBaseException().Message);
         }
         return null;
     }
@@ -173,7 +89,7 @@ internal static class NativeVoiceRoutingBridge
         if (typed != null)
         {
             lock (Sync) rtcAudio = typed;
-            ModLog.Info("R15: resolved strongly typed Epic.OnlineServices.RTCAudio.RTCAudioInterface.");
+            ModLog.Info("R18 resolved Epic.OnlineServices.RTCAudio.RTCAudioInterface for participant volume.");
         }
         return typed;
     }
@@ -182,14 +98,23 @@ internal static class NativeVoiceRoutingBridge
     {
         object? voice;
         lock (Sync) voice = eosVoice;
+        voice ??= ResolveVoiceInstance();
         if (voice == null) return null;
-        foreach (MemberInfo m in voice.GetType().GetMembers(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+
+        foreach (MemberInfo member in voice.GetType().GetMembers(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
         {
-            Type? memberType = m is FieldInfo f ? f.FieldType : m is PropertyInfo p && p.GetIndexParameters().Length == 0 ? p.PropertyType : null;
+            Type? memberType = member is FieldInfo field
+                ? field.FieldType
+                : member is PropertyInfo property && property.GetIndexParameters().Length == 0
+                    ? property.PropertyType
+                    : null;
             if (memberType == null || !typeof(ProductUserId).IsAssignableFrom(memberType)) continue;
+
             try
             {
-                return m is FieldInfo ff ? ff.GetValue(voice) as ProductUserId : ((PropertyInfo)m).GetValue(voice, null) as ProductUserId;
+                return member is FieldInfo f
+                    ? f.GetValue(voice) as ProductUserId
+                    : ((PropertyInfo)member).GetValue(voice, null) as ProductUserId;
             }
             catch { }
         }
@@ -216,12 +141,12 @@ internal static class NativeVoiceRoutingBridge
             string participantText = participant.ToString();
             bool first;
             lock (Sync) first = SeenParticipants.Add(participantText);
-            if (first) ModLog.Info($"R15: native participant discovered id={participantText}, room={roomName}.");
+            if (first) ModLog.Info($"R18 native participant discovered id={participantText}, room={roomName}.");
             SetParticipantVolume(participant, 1.0f);
         }
         catch (Exception ex)
         {
-            ModLog.Warning("R15 participant callback bridge failed: " + ex.GetBaseException().Message);
+            ModLog.Warning("R18 participant callback bridge failed: " + ex.GetBaseException().Message);
         }
     }
 
@@ -229,7 +154,11 @@ internal static class NativeVoiceRoutingBridge
     {
         RTCAudioInterface? audio;
         string room;
-        lock (Sync) { audio = rtcAudio; room = roomName; }
+        lock (Sync)
+        {
+            audio = rtcAudio;
+            room = roomName;
+        }
         ProductUserId? local = ResolveLocalProductUserId();
         if (audio == null || local == null || string.IsNullOrEmpty(room)) return;
 
@@ -245,12 +174,11 @@ internal static class NativeVoiceRoutingBridge
 
     static void OnParticipantVolumeResult(ref UpdateParticipantVolumeCallbackInfo data)
     {
-        ModLog.Info($"R15: typed UpdateParticipantVolume result={data.ResultCode}, participant={data.ParticipantId}, volume=1.0.");
+        ModLog.Info($"R18 UpdateParticipantVolume result={data.ResultCode}, participant={data.ParticipantId}, volume=1.0.");
     }
 
     public static void Shutdown()
     {
-        try { TrySetLocalSending(false); } catch { }
         try { harmony?.UnpatchSelf(); } catch { }
         lock (Sync)
         {
@@ -258,17 +186,17 @@ internal static class NativeVoiceRoutingBridge
             eosVoice = null;
             rtcAudio = null;
             roomName = string.Empty;
-            lastSendingState = null;
         }
+        harmony = null;
         initialized = false;
     }
 
     static object? ReadMember(object? obj, string name)
     {
         if (obj == null) return null;
-        Type t = obj.GetType();
-        return t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(obj, null)
-            ?? t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(obj);
+        Type type = obj.GetType();
+        return type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(obj, null)
+            ?? type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(obj);
     }
 
     static string? ReadString(object obj, string name) => ReadMember(obj, name) as string;
