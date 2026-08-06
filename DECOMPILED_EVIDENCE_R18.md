@@ -171,3 +171,21 @@ List<EntityPlayer> players = world.GetPlayers();
 ```
 
 The decompiled `World` type proves `GetPlayers()` returns `Players.list`.
+
+## Input starts muted and local join state
+
+ILSpy also shows both `CreateLobby` and `JoinLobby` setting:
+
+```csharp
+LocalAudioDeviceInputStartsMuted = true
+```
+
+When the local participant reports `RTCParticipantStatus.Joined`, `participantStatusChanged(...)` writes:
+
+```csharp
+roomEntered = true;
+muteSelf = true;
+muteOthers = false;
+```
+
+This proves that the local RTC input begins muted and that changing the `MuteSelf` property to `false` is the managed transition that causes the stock setter to request `RTCAudioStatus.Enabled`.
