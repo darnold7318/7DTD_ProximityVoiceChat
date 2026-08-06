@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <LangVersion>10.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>ProximityPartyVoice</AssemblyName>
+    <RootNamespace>ProximityPartyVoice</RootNamespace>
+    <Version>1.0.14</Version>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <GameLibDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\lib\Game'))</GameLibDir>
+    <ModSourceDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\mod'))</ModSourceDir>
+    <ModOutputDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\Build\ProximityPartyVoice'))</ModOutputDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="0Harmony" HintPath="$(GameLibDir)\0Harmony.dll" Private="false" />
+    <Reference Include="Assembly-CSharp" HintPath="$(GameLibDir)\Assembly-CSharp.dll" Private="false" />
+    <Reference Include="Assembly-CSharp-firstpass" HintPath="$(GameLibDir)\Assembly-CSharp-firstpass.dll" Private="false" />
+    <Reference Include="NGUI" HintPath="$(GameLibDir)\NGUI.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(GameLibDir)\UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(GameLibDir)\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.AudioModule" HintPath="$(GameLibDir)\UnityEngine.AudioModule.dll" Private="false" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(GameLibDir)\UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.InputLegacyModule" HintPath="$(GameLibDir)\UnityEngine.InputLegacyModule.dll" Private="false" />
+    <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(GameLibDir)\UnityEngine.TextRenderingModule.dll" Private="false" />
+    <Reference Include="EOS" HintPath="$(GameLibDir)\EOS.dll" Private="false" />
+  </ItemGroup>
+
+  <Target Name="ValidateGameReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(GameLibDir)\Assembly-CSharp.dll')" Text="Missing B14 game references. Keep lib\Game in the extracted solution root." />
+    <Error Condition="!Exists('$(GameLibDir)\UnityEngine.CoreModule.dll')" Text="Missing Unity B14 references in lib\Game." />
+    <Error Condition="!Exists('$(GameLibDir)\UnityEngine.TextRenderingModule.dll')" Text="Missing UnityEngine.TextRenderingModule.dll in lib\Game." />
+  </Target>
+
+  <Target Name="BuildModFolder" AfterTargets="Build">
+    <RemoveDir Directories="$(ModOutputDir)" />
+    <MakeDir Directories="$(ModOutputDir)" />
+    <ItemGroup>
+      <ModFiles Include="$(ModSourceDir)\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModFiles)" DestinationFiles="@(ModFiles->'$(ModOutputDir)\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModOutputDir)" />
+  </Target>
+</Project>
