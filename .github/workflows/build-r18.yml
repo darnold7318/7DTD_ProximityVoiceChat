@@ -1,0 +1,64 @@
+name: Build R18
+
+on:
+  push:
+    branches:
+      - r18-verified-capture-path
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Extract exact V3.1 b14 managed references
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf lib/Game .managed
+          mkdir -p lib/Game .managed
+          unzip -q Managed.zip -d .managed
+          managed_dir="$(find .managed -type f -name Assembly-CSharp.dll -printf '%h\n' | head -1)"
+          test -n "$managed_dir"
+          cp "$managed_dir"/*.dll lib/Game/
+
+      - name: Restore Harmony compile reference
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fsSL https://www.nuget.org/api/v2/package/Lib.Harmony/2.4.2 -o harmony.nupkg
+          mkdir -p .harmony
+          unzip -q harmony.nupkg -d .harmony
+          harmony_dll="$(find .harmony -type f -name 0Harmony.dll | grep -E '/net(472|48|standard2\.0)/' | head -1)"
+          test -n "$harmony_dll"
+          cp "$harmony_dll" lib/Game/0Harmony.dll
+
+      - name: Verify supplied assembly hash
+        shell: bash
+        run: echo "b13862e30d8b28f42b83fe6a36bf074d155a6c43164e7b0797a6e4f77bd7dea3  lib/Game/Assembly-CSharp.dll" | sha256sum -c -
+
+      - name: Build Release
+        run: dotnet build ProximityPartyVoice.sln -c Release --nologo
+
+      - name: Package complete solution and installable mod
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          zip -qr artifacts/ProximityPartyVoice-1.0.15-R18-complete-solution.zip . \
+            -x '.git/*' '.managed/*' '.harmony/*' 'artifacts/*' 'src/*/bin/*' 'src/*/obj/*'
+          cd Build
+          zip -qr ../artifacts/ProximityPartyVoice-1.0.15-R18-installable.zip ProximityPartyVoice
+
+      - name: Upload R18 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProximityPartyVoice-R18
+          path: artifacts/*
+          if-no-files-found: error
