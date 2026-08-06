@@ -14,3 +14,5 @@ VoiceHelpers.PushToTalkPressed()
 Open `ProximityPartyVoice.sln` in Visual Studio 2022 and build **Release | Any CPU**. The installable mod folder is generated at `Build/ProximityPartyVoice`.
 
 See `DECOMPILED_EVIDENCE_R18.md` and `README_R18_VERIFIED_CAPTURE_PATH.md`.
+
+Build details and output hashes are recorded in `BUILD_VERIFICATION_R18.md`.
