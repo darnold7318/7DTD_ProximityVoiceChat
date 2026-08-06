@@ -1,6 +1,5 @@
 using System;
-using System.Collections;
-using System.Reflection;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ProximityPartyVoice;
@@ -25,7 +24,7 @@ internal static class GameAdapter
     {
         try
         {
-            var player = GameManager.Instance?.World?.GetPrimaryPlayer();
+            EntityPlayerLocal? player = GameManager.Instance?.World?.GetPrimaryPlayer();
             if (player == null)
                 return new LocalVoiceState(-1, 0, Vector3.zero);
 
@@ -41,136 +40,41 @@ internal static class GameAdapter
     {
         try
         {
-            object? world = GameManager.Instance?.World;
-            object? local = world == null ? null : Invoke(world, "GetPrimaryPlayer");
+            World? world = GameManager.Instance?.World;
+            EntityPlayerLocal? local = world?.GetPrimaryPlayer();
             if (world == null || local == null) return false;
 
-            int localId = ReadInt(local, "entityId", "EntityId", "entityID");
-            Vector3 localPos = ReadPosition(local);
+            List<EntityPlayer> players = world.GetPlayers();
             float maxSqr = maxDistance * maxDistance;
+            Vector3 localPosition = local.position;
 
-            object? players = Get(world, "Players") ?? Get(world, "players")
-                           ?? Get(world, "PlayerEntities") ?? Get(world, "playerEntities");
-            if (players is IEnumerable enumerable)
+            for (int i = 0; i < players.Count; i++)
             {
-                foreach (object? candidate in enumerable)
-                {
-                    object? player = UnwrapDictionaryEntry(candidate);
-                    if (player == null || ReferenceEquals(player, local)) continue;
-                    if (!LooksLikePlayer(player)) continue;
-                    int id = ReadInt(player, "entityId", "EntityId", "entityID");
-                    if (id >= 0 && id == localId) continue;
-                    if ((ReadPosition(player) - localPos).sqrMagnitude <= maxSqr) return true;
-                }
-            }
+                EntityPlayer? candidate = players[i];
+                if (candidate == null || candidate.entityId == local.entityId) continue;
 
-            // Fallback for builds exposing all entities instead of a player list.
-            object? entities = Get(world, "Entities") ?? Get(world, "entities")
-                            ?? Get(world, "EntitiesList") ?? Get(world, "entitiesList");
-            if (entities is IEnumerable all)
-            {
-                foreach (object? candidate in all)
-                {
-                    object? player = UnwrapDictionaryEntry(candidate);
-                    if (player == null || ReferenceEquals(player, local) || !LooksLikePlayer(player)) continue;
-                    int id = ReadInt(player, "entityId", "EntityId", "entityID");
-                    if (id >= 0 && id == localId) continue;
-                    if ((ReadPosition(player) - localPos).sqrMagnitude <= maxSqr) return true;
-                }
+                if ((candidate.position - localPosition).sqrMagnitude <= maxSqr)
+                    return true;
             }
         }
         catch (Exception ex)
         {
             ModLog.Warning("Proximity player scan failed: " + ex.GetBaseException().Message);
         }
+
         return false;
     }
 
-    private static object? UnwrapDictionaryEntry(object? value)
-    {
-        if (value is DictionaryEntry de) return de.Value;
-        if (value == null) return null;
-        object? unwrapped = Get(value, "Value");
-        return unwrapped ?? value;
-    }
-
-    private static bool LooksLikePlayer(object value)
-    {
-        string name = value.GetType().Name;
-        return name.IndexOf("EntityPlayer", StringComparison.OrdinalIgnoreCase) >= 0;
-    }
-
-    private static Vector3 ReadPosition(object value)
-    {
-        object? result = Get(value, "position") ?? Get(value, "Position");
-        if (result is Vector3 v) return v;
-        object? transform = Get(value, "transform") ?? Get(value, "Transform");
-        result = transform == null ? null : Get(transform, "position") ?? Get(transform, "Position");
-        return result is Vector3 tv ? tv : Vector3.zero;
-    }
-
-    private static int ReadInt(object value, params string[] names)
-    {
-        foreach (string name in names)
-        {
-            object? result = Get(value, name);
-            if (result is int i) return i;
-        }
-        return -1;
-    }
-
-    private static int FindPartyId(object player)
-    {
-        foreach (string name in new[] { "PartyId", "partyID", "partyId" })
-        {
-            object? value = Get(player, name);
-            if (value is int id)
-                return id;
-        }
-
-        object? party = Get(player, "Party") ?? Get(player, "party");
-        if (party != null)
-        {
-            foreach (string name in new[] { "PartyId", "partyID", "partyId", "ID", "Id" })
-            {
-                if (Get(party, name) is int id)
-                    return id;
-            }
-        }
-
-        return 0;
-    }
-
-    public static bool IsServer()
+    static int FindPartyId(EntityPlayer player)
     {
         try
         {
-            Type? type = Type.GetType("ConnectionManager, Assembly-CSharp");
-            object? instance = type?
-                .GetProperty("Instance", BindingFlags.Public | BindingFlags.Static)?
-                .GetValue(null);
-
-            foreach (string name in new[] { "IsServer", "IsDedicatedServer", "IsServerRunning" })
-            {
-                if (Get(instance, name) is bool value && value)
-                    return true;
-            }
+            Party? party = player.Party;
+            return party?.PartyID ?? 0;
         }
-        catch { }
-        return false;
-    }
-
-    private static object? Invoke(object target, string name)
-    {
-        return target.GetType().GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, Type.EmptyTypes, null)?.Invoke(target, null);
-    }
-
-    private static object? Get(object? instance, string name)
-    {
-        if (instance == null) return null;
-        Type type = instance.GetType();
-        return type.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(instance)
-            ?? type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(instance);
+        catch
+        {
+            return 0;
+        }
     }
 }
