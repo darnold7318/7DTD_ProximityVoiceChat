@@ -1,0 +1,2 @@
+b13862e30d8b28f42b83fe6a36bf074d155a6c43164e7b0797a6e4f77bd7dea3  Assembly-CSharp.dll
+Source: supplied Managed(4).zip
