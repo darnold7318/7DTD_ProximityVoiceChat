@@ -6,17 +6,25 @@ namespace ProximityPartyVoice;
 public sealed class VoiceRuntime : MonoBehaviour
 {
     public static VoiceRuntime? Instance { get; private set; }
-    public static bool ShouldForceProximityPtt => Instance != null && Instance.hadLocalPlayer && !Instance.hud.SelectorOpen && Instance.proximityOpenMic;
+
+    public static bool ShouldTransmit =>
+        Instance != null && Instance.hadLocalPlayer && !Instance.hud.SelectorOpen && Instance.transmitting;
+
+    public static bool IsSelectorOpen => Instance != null && Instance.hud.SelectorOpen;
+    public static bool ProximityOpenMic => Instance != null && Instance.proximityOpenMic;
+    public static bool RadioTransmitRequested => Instance != null && Instance.radioTransmitRequested;
+
     VoiceSettings settings = null!;
     VoiceHud hud = null!;
     bool toggled;
     bool transmitting;
+    bool radioTransmitRequested;
     float lastTap = -10f;
     int channel;
     bool hadLocalPlayer;
     bool escapeWasHeld;
     bool proximityOpenMic;
-    bool priorProximityOpenMic;
+    int lastContinuousDecisionFrame = -1;
 
     public static void Create(string modPath)
     {
@@ -34,7 +42,7 @@ public sealed class VoiceRuntime : MonoBehaviour
         hud = new VoiceHud(settings);
         NativeVoiceRoutingBridge.Initialize();
         BaseGameVoiceTakeover.Initialize();
-        ModLog.Info("R17 active: direct SetPushToTalkActive/MuteSelf capture-state control, typed EOS routing, proximity open mic, radio channels, hold V radio PTT, and double-tap V channel selection.");
+        ModLog.Info("R18 active: ILSpy-verified PartyVoice.Update -> Platform.EOS.Voice.MuteSelf capture path, direct B14 player enumeration, proximity open mic, and hold-V radio PTT.");
     }
 
     void Update()
@@ -42,25 +50,14 @@ public sealed class VoiceRuntime : MonoBehaviour
         LocalVoiceState local = GameAdapter.Local();
         bool hasLocalPlayer = local.EntityId >= 0;
 
-        // A joining client can spend much longer than 1.5 seconds without a
-        // primary player while the world is loading. Keep the persistent runtime
-        // alive and simply remain inactive until the local player exists.
         if (!hasLocalPlayer)
         {
             if (hadLocalPlayer)
             {
-                // The player left a world. Release modal/input state immediately,
-                // but retain the runtime so a later world join works without a
-                // second initialization pass.
                 if (hud.SelectorOpen)
                     CloseSelector();
 
-                transmitting = false;
-                proximityOpenMic = false;
-                priorProximityOpenMic = false;
-                BaseGameVoiceTakeover.SetForcedPttState(false, false);
-                NativeCaptureStateBridge.SetCaptureActive(false);
-                NativeVoiceRoutingBridge.TrySetLocalSending(false);
+                ResetTransmitState();
                 toggled = false;
                 escapeWasHeld = false;
                 ModLog.Info("Local player unavailable; HUD and voice input suspended until a world is active.");
@@ -72,19 +69,18 @@ public sealed class VoiceRuntime : MonoBehaviour
 
         hadLocalPlayer = true;
 
-        // This component executes before the game's camera/input consumers.
-        // Clear legacy mouse axes first while modal so look never reaches the player.
         if (hud.SelectorOpen)
             Input.ResetInputAxes();
 
-        HandleInput();
+        HandleInputEdges();
+        RefreshContinuousTransmitState();
         GameUiInputBridge.MaintainModalCursor();
 
         if (hud.SelectorOpen)
             Input.ResetInputAxes();
     }
 
-    void HandleInput()
+    void HandleInputEdges()
     {
         bool escapeHeld = Input.GetKey(KeyCode.Escape);
         bool escapePressed = Input.GetKeyDown(KeyCode.Escape) || (escapeHeld && !escapeWasHeld);
@@ -96,39 +92,59 @@ public sealed class VoiceRuntime : MonoBehaviour
             return;
         }
 
-        bool down = Input.GetKeyDown(settings.InputKey);
-        if (down)
+        if (!Input.GetKeyDown(settings.InputKey)) return;
+
+        float now = Time.unscaledTime;
+        if ((now - lastTap) * 1000f <= settings.DoubleTapWindowMs)
         {
-            float now = Time.unscaledTime;
-            if ((now - lastTap) * 1000f <= settings.DoubleTapWindowMs)
-            {
-                hud.ToggleSelector();
-                lastTap = -10f;
-                if (settings.SuppressTransmitOnDoubleTap) transmitting = false;
-                return;
-            }
-            lastTap = now;
-            if (settings.InputMode == TransmitMode.Toggle) toggled = !toggled;
+            hud.ToggleSelector();
+            lastTap = -10f;
+            if (hud.SelectorOpen || settings.SuppressTransmitOnDoubleTap)
+                ResetTransmitState();
+            return;
         }
-        bool radioPtt = settings.InputMode == TransmitMode.PushToTalk ? Input.GetKey(settings.InputKey) : toggled;
-        proximityOpenMic = settings.ProximityEnabled && GameAdapter.AnyOtherPlayerWithin(settings.FadeEndMeters);
-        bool proximityJustActivated = proximityOpenMic && !priorProximityOpenMic;
-        priorProximityOpenMic = proximityOpenMic;
 
-        // Do not suppress or replace PartyVoice. Extend the exact boolean input
-        // the stock voice code reads, allowing it to own capture and EOS sending.
-        bool forceNativePtt = !hud.SelectorOpen && proximityOpenMic;
-        BaseGameVoiceTakeover.SetForcedPttState(forceNativePtt, forceNativePtt && proximityJustActivated);
-
-        transmitting = !hud.SelectorOpen && (radioPtt || proximityOpenMic);
-
-        // R14: use the exact EOS RTCAudio UpdateSending path with the corrected
-        // by-reference options type. R13 remains as a fallback so the stock game
-        // can still observe the synthetic PTT state.
-        NativeCaptureStateBridge.SetCaptureActive(transmitting);
-        NativeVoiceRoutingBridge.TrySetLocalSending(transmitting);
+        lastTap = now;
+        if (settings.InputMode == TransmitMode.Toggle)
+            toggled = !toggled;
     }
 
+    void RefreshContinuousTransmitState()
+    {
+        lastContinuousDecisionFrame = Time.frameCount;
+
+        if (!hadLocalPlayer || hud.SelectorOpen)
+        {
+            ResetTransmitState();
+            return;
+        }
+
+        radioTransmitRequested = settings.RadioEnabled &&
+            (settings.InputMode == TransmitMode.PushToTalk
+                ? Input.GetKey(settings.InputKey)
+                : toggled);
+
+        proximityOpenMic = settings.ProximityEnabled &&
+            GameAdapter.AnyOtherPlayerWithin(settings.FadeEndMeters);
+
+        transmitting = radioTransmitRequested || proximityOpenMic;
+    }
+
+    public static void EnsureVoiceDecisionCurrent()
+    {
+        VoiceRuntime? runtime = Instance;
+        if (runtime == null || !runtime.hadLocalPlayer) return;
+        if (runtime.lastContinuousDecisionFrame == Time.frameCount) return;
+        runtime.RefreshContinuousTransmitState();
+    }
+
+    void ResetTransmitState()
+    {
+        transmitting = false;
+        radioTransmitRequested = false;
+        proximityOpenMic = false;
+        lastContinuousDecisionFrame = Time.frameCount;
+    }
 
     void OnGUI()
     {
@@ -166,30 +182,19 @@ public sealed class VoiceRuntime : MonoBehaviour
     {
         if (!hud.SelectorOpen) return;
         hud.SetSelectorOpen(false);
-        transmitting = false;
-        proximityOpenMic = false;
-        priorProximityOpenMic = false;
-        BaseGameVoiceTakeover.SetForcedPttState(false, false);
-        NativeCaptureStateBridge.SetCaptureActive(false);
-        NativeVoiceRoutingBridge.TrySetLocalSending(false);
+        ResetTransmitState();
         Input.ResetInputAxes();
-        ModLog.Info("R9 channel selector closed.");
+        ModLog.Info("R18 channel selector closed.");
     }
 
     void OnDestroy()
     {
-        transmitting = false;
-        proximityOpenMic = false;
-        priorProximityOpenMic = false;
-        BaseGameVoiceTakeover.SetForcedPttState(false, false);
-        NativeCaptureStateBridge.SetCaptureActive(false);
-        NativeVoiceRoutingBridge.TrySetLocalSending(false);
+        ResetTransmitState();
         toggled = false;
         hud?.SetSelectorOpen(false);
         BaseGameVoiceTakeover.Shutdown();
-        NativeCaptureStateBridge.Reset();
         NativeVoiceRoutingBridge.Shutdown();
         Instance = null;
-        ModLog.Info("R9 native routing runtime cleaned up.");
+        ModLog.Info("R18 native routing runtime cleaned up.");
     }
 }
